@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Minhas Entregas</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, Roboto, sans-serif; height: 100vh; display: flex; flex-direction: column; background: #f5f5f5; }
+  #map { flex: 1; min-height: 0; }
+  
+  #toolbar-wrap { background: #fff; border-bottom: 1px solid #ddd; }
+  #toolbar { display: flex; gap: 6px; padding: 8px; flex-wrap: wrap; align-items: center; }
+  #toolbar.hidden { display: none; }
+  #toolbar button, #toolbar label { padding: 10px 12px; font-size: 14px; border: none; border-radius: 6px; background: #1565c0; color: #fff; cursor: pointer; }
+  #toolbar label { background: #2e7d32; }
+  #toolbar input[type="file"] { display: none; }
+  #toolbar select { padding: 10px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; }
+  
+  #toggleBar { padding: 8px 12px; font-size: 13px; border: none; border-radius: 6px; background: #444; color: #fff; cursor: pointer; margin-left: auto; }
+  
+  #compact-bar { display: none; padding: 6px 8px; gap: 6px; background: #fff; align-items: center; border-bottom: 1px solid #ddd; }
+  #compact-bar.show { display: flex; }
+  #compact-bar button { padding: 8px 12px; font-size: 13px; border: none; border-radius: 6px; background: #1565c0; color: #fff; cursor: pointer; }
+  #compact-bar button.green { background: #2e7d32; }
+  #compact-bar button.gray { background: #444; }
+  #compact-bar .spacer { flex: 1; }
+  
+  #gps-check-panel { background: #fff; border-bottom: 1px solid #ddd; padding: 12px; display: none; }
+  #gps-check-panel.show { display: block; }
+  .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; }
+  .check-item .icon { width: 20px; text-align: center; font-weight: bold; }
+  .check-item .icon.ok { color: #2e7d32; }
+  .check-item .icon.fail { color: #c62828; }
+  .check-item .icon.warn { color: #f57c00; }
+  .check-item .msg { flex: 1; }
+  .check-item button { padding: 8px 12px; font-size: 13px; border: none; border-radius: 5px; background: #1565c0; color: #fff; cursor: pointer; white-space: nowrap; }
+  .check-item button:disabled { background: #aaa; cursor: not-allowed; }
+  
+  #list { max-height: 40vh; overflow-y: auto; background: #fff; border-top: 1px solid #ddd; display: none; }
+  #list.open { display: block; }
+  .stop { padding: 10px 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .stop .info { flex: 1; font-size: 13px; }
+  .stop .info b { display: block; font-size: 15px; color: #1565c0; }
+  .stop .info small { color: #666; }
+  .stop .btns { display: flex; gap: 4px; }
+  .stop button { padding: 8px 10px; font-size: 12px; border: none; border-radius: 5px; cursor: pointer; }
+  .btn-ok { background: #2e7d32; color: #fff; }
+  .btn-fail { background: #c62828; color: #fff; }
+  .btn-nav { background: #1565c0; color: #fff; }
+  .stop.done { opacity: 0.55; }
+  .stop.done .info b { text-decoration: line-through; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; color: #fff; margin-left: 4px; }
+  .badge.ok { background: #2e7d32; }
+  .badge.fail { background: #c62828; }
+  .badge.corrected { background: #f9a825; color: #333; }
+  
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; display: none; z-index: 9999; max-width: 90vw; text-align: center; }
+  #toast.show { display: block; }
+  #gps-status-bar { padding: 6px 12px; background: #fff3e0; font-size: 11px; color: #555; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+  #gps-status-bar span.acc-good { color: #2e7d32; font-weight: bold; }
+  #gps-status-bar span.acc-warn { color: #f57c00; font-weight: bold; }
+  #gps-status-bar span.acc-bad { color: #c62828; font-weight: bold; }
+  
+  /* Legenda de cores */
+  #legend { position: absolute; bottom: 10px; left: 10px; background: rgba(255,255,255,0.95); border-radius: 6px; padding: 8px 10px; font-size: 11px; z-index: 1000; box-shadow: 0 2px 6px rgba(0,0,0,0.2); display: none; }
+  #legend.show { display: block; }
+  #legend div { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  #legend .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 0 1px #999; }
+</style>
+</head>
+<body>
+
+<div id="toolbar-wrap">
+  <div id="toolbar">
+    <label for="file">📂 Importar Planilha
+      <input type="file" id="file" accept=".xlsx,.xls,.csv">
+    </label>
+    <select id="labelMode" title="O que mostrar no balão do mapa">
+      <option value="stop">Mostrar: Stop (número)</option>
+      <option value="sequence">Mostrar: Sequence</option>
+      <option value="tracking">Mostrar: Código Rastreio</option>
+    </select>
+    <button id="btnList">📋 Lista</button>
+    <button id="btnLocate">📍 Minha Posição</button>
+    <button id="btnCheckGPS" style="background:#f57c00;">⚙️ Verificar GPS</button>
+    <button id="btnLegend" style="background:#666;">🎨 Legenda</button>
+    <button id="btnClear" style="background:#c62828;">🗑️ Limpar</button>
+    <button id="toggleBar" title="Recolher barra">▲ Ocultar</button>
+  </div>
+
+  <div id="compact-bar">
+    <button id="cList">📋 Lista</button>
+    <button id="cLocate" class="green">📍</button>
+    <div class="spacer"></div>
+    <button id="cExpand" class="gray" title="Mostrar opções">▼ Opções</button>
+  </div>
+</div>
+
+<div id="gps-status-bar">
+  <span>GPS: <span id="gpsStatus">verificando…</span></span>
+  <span id="gpsAccuracy"></span>
+</div>
+
+<div id="gps-check-panel">
+  <div style="font-weight:bold; margin-bottom:8px; font-size:15px;">Diagnóstico do GPS</div>
+  <div class="check-item" id="item-https">
+    <span class="icon">⏳</span>
+    <span class="msg">Conexão segura (HTTPS)</span>
+    <button disabled>—</button>
+  </div>
+  <div class="check-item" id="item-permission">
+    <span class="icon">⏳</span>
+    <span class="msg">Permissão de localização do site</span>
+    <button disabled>—</button>
+  </div>
+  <div class="check-item" id="item-system">
+    <span class="icon">⏳</span>
+    <span class="msg">GPS do dispositivo</span>
+    <button disabled>—</button>
+  </div>
+  <div class="check-item" id="item-accuracy">
+    <span class="icon">⏳</span>
+    <span class="msg">Precisão do sinal</span>
+    <button disabled>—</button>
+  </div>
+  <button id="btnClosePanel" style="margin-top:10px; width:100%; padding:10px; background:#666; color:#fff; border:none; border-radius:6px; font-size:14px;">Fechar diagnóstico</button>
+</div>
+
+<div id="map"></div>
+
+<div id="legend">
+  <div><span class="dot" style="background:#1565c0"></span> Planilha (não verificado)</div>
+  <div><span class="dot" style="background:#f9a825"></span> Corrigido manualmente</div>
+  <div><span class="dot" style="background:#2e7d32"></span> Entregue (GPS salvo)</div>
+  <div><span class="dot" style="background:#c62828"></span> Falha na entrega</div>
+</div>
+
+<div id="list"></div>
+<div id="toast"></div>
+
+<script>
+/* ===================== CONFIG ===================== */
+const DB_NAME = 'entregas_db';
+const STORE = 'enderecos';
+const STORE_STOPS = 'paradas';
+const LS_COLLAPSED = 'entregas_bar_collapsed';
+const LS_LEGEND = 'entregas_legend_visible';
+
+/* ===================== IndexedDB ===================== */
+let db;
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'key' });
+      if (!d.objectStoreNames.contains(STORE_STOPS)) d.createObjectStore(STORE_STOPS, { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = e => { db = e.target.result; resolve(db); };
+    req.onerror = e => reject(e.target.error);
+    setTimeout(() => reject(new Error('IndexedDB não abriu em 10s')), 10000);
+  });
+}
+function dbPut(store, val) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readwrite');
+    const r = tx.objectStore(store).put(val);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    tx.onerror = () => rej(tx.error);
+    setTimeout(() => rej(new Error('dbPut timeout')), 5000);
+  });
+}
+function dbGetAll(store) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readonly');
+    const r = tx.objectStore(store).getAll();
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    setTimeout(() => rej(new Error('dbGetAll timeout')), 5000);
+  });
+}
+function dbClear(store) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readwrite');
+    const r = tx.objectStore(store).clear();
+    r.onsuccess = () => res();
+    r.onerror = () => rej(r.error);
+    setTimeout(() => rej(new Error('dbClear timeout')), 5000);
+  });
+}
+
+/* ===================== MAPA ===================== */
+const map = L.map('map').setView([-24.1, -48.36], 14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+let markers = [];
+let currentPosMarker = null;
+let myLatLng = null;
+
+/* ===================== RECOLHER / EXPANDIR ===================== */
+const toolbar = document.getElementById('toolbar');
+const compactBar = document.getElementById('compact-bar');
+
+function setCollapsed(collapsed) {
+  if (collapsed) {
+    toolbar.classList.add('hidden');
+    compactBar.classList.add('show');
+    localStorage.setItem(LS_COLLAPSED, '1');
+  } else {
+    toolbar.classList.remove('hidden');
+    compactBar.classList.remove('show');
+    localStorage.setItem(LS_COLLAPSED, '0');
+  }
+  setTimeout(() => map.invalidateSize(), 50);
+}
+document.getElementById('toggleBar').onclick = () => setCollapsed(true);
+document.getElementById('cExpand').onclick = () => setCollapsed(false);
+if (localStorage.getItem(LS_COLLAPSED) === '1') setCollapsed(true);
+
+document.getElementById('cList').onclick = () => {
+  document.getElementById('list').classList.toggle('open');
+  renderList();
+  setTimeout(() => map.invalidateSize(), 50);
+};
+document.getElementById('cLocate').onclick = () => {
+  if (myLatLng) {
+    map.setView([myLatLng.lat, myLatLng.lng], 17);
+    if (currentPosMarker) currentPosMarker.openPopup();
+  } else toast('GPS ainda não disponível. Toque em "Opções" > "Verificar GPS".');
+};
+
+/* ===================== LEGENDA ===================== */
+const legend = document.getElementById('legend');
+document.getElementById('btnLegend').onclick = () => {
+  legend.classList.toggle('show');
+  localStorage.setItem(LS_LEGEND, legend.classList.contains('show') ? '1' : '0');
+};
+if (localStorage.getItem(LS_LEGEND) === '1') legend.classList.add('show');
+
+/* ===================== DIAGNÓSTICO GPS ===================== */
+const panel = document.getElementById('gps-check-panel');
+document.getElementById('btnCheckGPS').onclick = () => {
+  panel.classList.add('show');
+  setTimeout(() => map.invalidateSize(), 50);
+  runDiagnostics();
+};
+document.getElementById('btnClosePanel').onclick = () => {
+  panel.classList.remove('show');
+  setTimeout(() => map.invalidateSize(), 50);
+};
+
+function setCheckItem(id, status, msg, buttonText, buttonAction) {
+  const el = document.getElementById(id);
+  const icon = el.querySelector('.icon');
+  const msgEl = el.querySelector('.msg');
+  const btn = el.querySelector('button');
+  icon.className = 'icon ' + status;
+  icon.textContent = status === 'ok' ? '✅' : status === 'fail' ? '❌' : status === 'warn' ? '⚠️' : '⏳';
+  msgEl.textContent = msg;
+  if (buttonText && buttonAction) {
+    btn.textContent = buttonText;
+    btn.disabled = false;
+    btn.onclick = buttonAction;
+  } else {
+    btn.textContent = '—';
+    btn.disabled = true;
+    btn.onclick = null;
+  }
+}
+
+async function runDiagnostics() {
+  const isSecure = window.location.protocol === 'https:' || 
+                   window.location.hostname === 'localhost' || 
+                   window.location.hostname === '127.0.0.1';
+  if (isSecure) {
+    setCheckItem('item-https', 'ok', 'Conexão segura (HTTPS/localhost)');
+  } else {
+    setCheckItem('item-https', 'fail', 'Conexão NÃO segura. GPS não funciona em HTTP.', 'Como resolver', () => {
+      alert('Você precisa acessar este app via HTTPS ou localhost.\n\nSe estiver testando localmente, abra como http://localhost:8000/entregas.html.\n\nPara usar no celular, hospede no GitHub Pages, Netlify ou qualquer serviço com HTTPS.');
+    });
+  }
+
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      setCheckItem('item-permission', 'warn', 'API de permissões não suportada', null, null);
+    } else {
+      const perm = await navigator.permissions.query({ name: 'geolocation' });
+      if (perm.state === 'granted') {
+        setCheckItem('item-permission', 'ok', 'Permissão concedida');
+      } else if (perm.state === 'prompt') {
+        setCheckItem('item-permission', 'warn', 'Permissão será solicitada', 'Solicitar agora', async () => {
+          try {
+            await getPreciseGPS();
+            setCheckItem('item-permission', 'ok', 'Permissão concedida');
+            toast('Permissão OK');
+            runDiagnostics();
+          } catch (e) {
+            setCheckItem('item-permission', 'fail', 'Permissão negada. ' + e.message, 'Tentar de novo', () => runDiagnostics());
+          }
+        });
+      } else {
+        setCheckItem('item-permission', 'fail', 'Permissão BLOQUEADA', 'Como desbloquear', () => {
+          alert('No Chrome (Android):\n1. Toque no cadeado ao lado do endereço\n2. Vá em "Permissões"\n3. Ative "Localização"\n\nNo Safari (iPhone):\n1. Toque em "aA"\n2. "Ajustes do Site"\n3. "Localização" > "Permitir"');
+        });
+      }
+    }
+  } catch (e) {
+    setCheckItem('item-permission', 'warn', 'Não foi possível consultar permissão', null, null);
+  }
+
+  setCheckItem('item-system', 'warn', 'Testando GPS…', null, null);
+  setCheckItem('item-accuracy', 'warn', 'Aguardando sinal…', null, null);
+  
+  try {
+    const pos = await getPreciseGPS();
+    setCheckItem('item-system', 'ok', 'GPS ativo');
+    const acc = Math.round(pos.acc);
+    if (acc <= 20) setCheckItem('item-accuracy', 'ok', `Excelente: ±${acc}m`);
+    else if (acc <= 50) setCheckItem('item-accuracy', 'warn', `Razoável: ±${acc}m`);
+    else setCheckItem('item-accuracy', 'fail', `Ruim: ±${acc}m. Vá para área aberta.`, 'Dica', () => {
+      alert('Para melhorar:\n• Vá para local aberto\n• Ative "Alta precisão" nas configurações\n• Evite locais fechados');
+    });
+    myLatLng = { lat: pos.lat, lng: pos.lng, acc: pos.acc };
+    updateMyPositionMarker();
+    updateGPSBar(pos.lat, pos.lng, acc);
+  } catch (e) {
+    setCheckItem('item-system', 'fail', 'GPS não respondeu: ' + e.message, 'Ajuda', () => {
+      alert('Android:\n1. Configurações > Localização\n2. Ative\n3. Ative "Alta precisão"\n\niPhone:\n1. Ajustes > Privacidade > Serviço de Localização\n2. Ative\n3. Navegador > "Durante o Uso"');
+    });
+    setCheckItem('item-accuracy', 'fail', 'Sem sinal');
+  }
+}
+
+/* ===================== GPS ===================== */
+function getPreciseGPS() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('GPS não suportado'));
+    let best = null;
+    let tries = 0;
+    const watchId = navigator.geolocation.watchPosition(
+      pos => {
+        const acc = pos.coords.accuracy;
+        if (!best || acc < best.acc) best = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc };
+        tries++;
+        if (best.acc <= 15 || tries >= 10) {
+          navigator.geolocation.clearWatch(watchId);
+          resolve(best);
+        }
+      },
+      err => { navigator.geolocation.clearWatch(watchId); reject(err); },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+    );
+    setTimeout(() => {
+      navigator.geolocation.clearWatch(watchId);
+      if (best) resolve(best); else reject(new Error('timeout ao obter GPS'));
+    }, 20000);
+  });
+}
+
+function updateMyPositionMarker() {
+  if (!myLatLng) return;
+  if (currentPosMarker) map.removeLayer(currentPosMarker);
+  currentPosMarker = L.circleMarker([myLatLng.lat, myLatLng.lng], {
+    radius: 8, color: '#1565c0', fillColor: '#2196f3', fillOpacity: 0.9, weight: 2
+  }).addTo(map).bindPopup(`Você está aqui (±${Math.round(myLatLng.acc)}m)`);
+}
+
+function updateGPSBar(lat, lng, acc) {
+  document.getElementById('gpsStatus').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  const accEl = document.getElementById('gpsAccuracy');
+  const a = Math.round(acc);
+  accEl.textContent = `±${a}m`;
+  accEl.className = a <= 20 ? 'acc-good' : a <= 50 ? 'acc-warn' : 'acc-bad';
+}
+
+function watchGPS() {
+  if (!navigator.geolocation) { document.getElementById('gpsStatus').textContent = 'não suportado'; return; }
+  navigator.geolocation.watchPosition(
+    pos => {
+      myLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
+      updateGPSBar(myLatLng.lat, myLatLng.lng, myLatLng.acc);
+      updateMyPositionMarker();
+    },
+    err => { document.getElementById('gpsStatus').textContent = 'erro: ' + err.message; },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+/* ===================== NORMALIZA ===================== */
+function normAddress(addr) {
+  return (addr || '').toLowerCase().replace(/[.,;]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* ===================== AGRUPAR POR STOP (quantidade de pacotes) ===================== */
+function groupByStop(stops) {
+  const groups = {};
+  for (const s of stops) {
+    const key = String(s.stop);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(s);
+  }
+  return groups;
+}
+
+/* ===================== IMPORTAÇÃO ===================== */
+document.getElementById('file').addEventListener('change', async (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  console.log('📂 Arquivo:', file.name, file.size, 'bytes');
+
+  try {
+    toast('1/5 Lendo arquivo…');
+    const data = await file.arrayBuffer();
+    console.log('✅ Arquivo lido:', data.byteLength, 'bytes');
+
+    toast('2/5 Interpretando planilha…');
+    const wb = XLSX.read(data, { type: 'array' });
+    console.log('✅ Abas:', wb.SheetNames);
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    if (!sheet) throw new Error('Planilha sem abas');
+    
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    console.log('✅ Linhas:', rows.length);
+    if (!rows.length) { toast('Planilha vazia'); return; }
+
+    toast('3/5 Convertendo paradas…');
+    const pick = (row, names) => {
+      for (const n of names) {
+        const key = Object.keys(row).find(k => k.toLowerCase().trim() === n.toLowerCase());
+        if (key !== undefined && row[key] !== '' && row[key] !== null) return row[key];
+      }
+      return '';
+    };
+
+    const stops = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const stop     = pick(r, ['Stop', 'Parada']);
+      const seq      = pick(r, ['Sequence', 'Sequência', 'Seq']);
+      const tracking = pick(r, ['SPX TN', 'Tracking', 'Código']);
+      const address  = pick(r, ['Destination Address', 'Endereço', 'Address', 'Endereco']);
+      const bairro   = pick(r, ['Bairro']);
+      const latRaw   = pick(r, ['Latitude', 'Lat']);
+      const lngRaw   = pick(r, ['Longitude', 'Lng', 'Long']);
+      const lat = parseFloat(String(latRaw).replace(',', '.'));
+      const lng = parseFloat(String(lngRaw).replace(',', '.'));
+      if (isNaN(lat) || isNaN(lng)) {
+        console.warn(`⚠️ Linha ${i+1} sem coordenada:`, r);
+        continue;
+      }
+      stops.push({
+        id: i, stop: String(stop || seq || (i + 1)), seq, tracking, address, bairro,
+        lat, lng, status: 'pending', savedLat: null, savedLng: null,
+        coordSource: 'planilha'  // planilha | corrigido | gps
+      });
+    }
+    console.log('✅ Paradas válidas:', stops.length, 'de', rows.length);
+    if (!stops.length) { toast('Nenhuma coordenada válida.'); return; }
+
+    toast('4/5 Limpando banco antigo…');
+    await dbClear(STORE_STOPS);
+
+    toast('5/5 Salvando ' + stops.length + ' paradas…');
+    for (let i = 0; i < stops.length; i++) {
+      await dbPut(STORE_STOPS, stops[i]);
+    }
+
+    await drawStops();
+    toast(`✔ ${stops.length} paradas carregadas`);
+    fitMapToStops(stops);
+
+  } catch (e) {
+    console.error('❌ ERRO:', e);
+    alert('Erro ao importar:\n\n' + e.message + '\n\nAbra o console (F12).');
+    toast('❌ Erro: ' + e.message);
+  }
+});
+
+/* ===================== DESENHA MARCADORES ===================== */
+let stopsCache = [];
+async function drawStops() {
+  stopsCache = await dbGetAll(STORE_STOPS);
+  const saved = await dbGetAll(STORE);
+  const savedMap = {};
+  saved.forEach(s => savedMap[s.key] = s);
+  
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  
+  const mode = document.getElementById('labelMode').value;
+  
+  // Agrupa por stop para contar pacotes
+  const groups = groupByStop(stopsCache);
+  
+  // Renderiza um marcador por GRUPO (stop), mostrando a quantidade de pacotes
+  for (const stopKey in groups) {
+    const group = groups[stopKey];
+    const first = group[0];
+    const qty = group.length;
+    
+    // Usa a coordenada salva se existir (correção manual ou GPS)
+    const key = normAddress(first.address);
+    let lat = first.lat, lng = first.lng;
+    let coordSource = first.coordSource || 'planilha';
+    if (savedMap[key]) {
+      lat = savedMap[key].lat;
+      lng = savedMap[key].lng;
+      coordSource = savedMap[key].source || 'gps';
+    }
+    
+    // Cor do balão baseada no status e fonte da coordenada
+    let color;
+    const allDelivered = group.every(s => s.status === 'delivered');
+    const allFailed = group.every(s => s.status === 'failed');
+    const anyFailed = group.some(s => s.status === 'failed');
+    const anyDelivered = group.some(s => s.status === 'delivered');
+    
+    if (anyDelivered && !anyFailed) color = '#2e7d32';        // verde
+    else if (anyFailed) color = '#c62828';                    // vermelho
+    else if (coordSource === 'corrigido') color = '#f9a825';  // amarelo
+    else color = '#1565c0';                                   // azul (planilha)
+    
+    // Label principal
+    let label = first.stop;
+    if (mode === 'sequence') label = first.seq || first.stop;
+    if (mode === 'tracking') label = first.tracking || first.stop;
+    
+    // Texto pequeno abaixo (quantidade de pacotes)
+    const qtyText = qty > 1 ? `${qty} PCT` : '';
+    
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="position:relative;width:40px;height:40px;">
+        <div style="background:${color};color:#fff;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)">${label}</div>
+        ${qtyText ? `<div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);background:#333;color:#fff;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:8px;white-space:nowrap;border:1px solid #fff">${qtyText}</div>` : ''}
+      </div>`,
+      iconSize: [40, 40], iconAnchor: [20, 20]
+    });
+    
+    const m = L.marker([lat, lng], { icon, draggable: true }).addTo(map);
+    
+    // Popup com detalhes e lista de pacotes
+    const packageList = group.map(g => `<li style="font-size:11px;color:#555">${g.tracking || 'sem código'} ${g.status === 'delivered' ? '✅' : g.status === 'failed' ? '❌' : '⏳'}</li>`).join('');
+    const statusBadge = anyDelivered ? `<span class="badge ok">Entregue</span>` : anyFailed ? `<span class="badge fail">Falha</span>` : '';
+    const coordBadge = coordSource === 'corrigido' ? `<span class="badge corrected">Corrigido</span>` : coordSource === 'gps' ? `<span class="badge ok">GPS</span>` : `<span class="badge" style="background:#1565c0">Planilha</span>`;
+    
+    m.bindPopup(`
+      <b>#${first.stop}</b> ${statusBadge} ${coordBadge}<br>
+      ${first.address || ''}<br>
+      <small>${first.bairro || ''}</small><br>
+      <b style="font-size:12px">${qty} pacote${qty > 1 ? 's' : ''}</b>
+      <ul style="margin:4px 0 8px 16px;padding:0">${packageList}</ul>
+      <button style="background:#1565c0;color:#fff;border:none;padding:8px 10px;border-radius:5px;margin-right:4px" onclick="navigateTo(${first.id})">🧭 Navegar</button>
+      <button style="background:#2e7d32;color:#fff;border:none;padding:8px 10px;border-radius:5px;margin-right:4px" onclick="markGroup('${stopKey}','delivered')">✔ Entregue</button>
+      <button style="background:#c62828;color:#fff;border:none;padding:8px 10px;border-radius:5px" onclick="markGroup('${stopKey}','failed')">✖ Falha</button>
+      <br><small style="color:#666;font-size:10px">Arraste o balão para corrigir a posição</small>
+    `);
+    
+    // Ao arrastar e soltar: salva coordenada corrigida
+    m.on('dragend', async () => {
+      const ll = m.getLatLng();
+      const key = normAddress(first.address);
+      if (key) {
+        await dbPut(STORE, {
+          key, address: first.address,
+          lat: ll.lat, lng: ll.lng,
+          source: 'corrigido',
+          savedAt: Date.now()
+        });
+      }
+      toast(`✔ Posição corrigida e salva: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
+      await drawStops();
+    });
+    
+    m._stopKey = stopKey;
+    m._firstId = first.id;
+    markers.push(m);
+  }
+  
+  renderList();
+}
+
+/* ===================== LISTA ===================== */
+function renderList() {
+  const listEl = document.getElementById('list');
+  if (!listEl.classList.contains('open')) return;
+  
+  const groups = groupByStop(stopsCache);
+  const html = [];
+  
+  for (const stopKey in groups) {
+    const group = groups[stopKey];
+    const first = group[0];
+    const qty = group.length;
+    const anyDelivered = group.some(s => s.status === 'delivered');
+    const anyFailed = group.some(s => s.status === 'failed');
+    const statusClass = anyDelivered ? 'done' : anyFailed ? 'done' : '';
+    
+    html.push(`
+      <div class="stop ${statusClass}">
+        <div class="info">
+          <b>#${first.stop}
+            ${anyDelivered ? '<span class="badge ok">Entregue</span>' : ''}
+            ${anyFailed ? '<span class="badge fail">Falha</span>' : ''}
+            <span class="badge" style="background:#333">${qty} PCT</span>
+          </b>
+          ${first.address || ''}<br><small>${first.tracking || ''}</small>
+        </div>
+        <div class="btns">
+          <button class="btn-nav" onclick="navigateTo(${first.id})">🧭</button>
+          <button class="btn-ok" onclick="markGroup('${stopKey}','delivered')">✔</button>
+          <button class="btn-fail" onclick="markGroup('${stopKey}','failed')">✖</button>
+        </div>
+      </div>
+    `);
+  }
+  
+  listEl.innerHTML = html.join('');
+}
+
+document.getElementById('btnList').onclick = () => {
+  document.getElementById('list').classList.toggle('open');
+  renderList();
+  setTimeout(() => map.invalidateSize(), 50);
+};
+
+/* ===================== AÇÕES ===================== */
+function navigateTo(id) {
+  const s = stopsCache.find(x => x.id === id);
+  if (!s) return;
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}&travelmode=driving`, '_blank');
+}
+
+async function markGroup(stopKey, status) {
+  const group = stopsCache.filter(s => String(s.stop) === String(stopKey));
+  if (!group.length) return;
+  
+  if (status === 'delivered') {
+    toast('Obtendo GPS para salvar coordenada…');
+    try {
+      const pos = await getPreciseGPS();
+      const key = normAddress(group[0].address);
+      if (key) {
+        await dbPut(STORE, {
+          key, address: group[0].address,
+          lat: pos.lat, lng: pos.lng,
+          source: 'gps',
+          savedAt: Date.now()
+        });
+      }
+      toast(`Coordenada GPS salva: ${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)} (±${Math.round(pos.acc)}m)`);
+    } catch (e) {
+      toast('Aviso: GPS falhou. ' + e.message);
+    }
+  }
+  
+  for (const s of group) {
+    s.status = status;
+    await dbPut(STORE_STOPS, s);
+  }
+  await drawStops();
+}
+
+function fitMapToStops(stops) {
+  if (!stops.length) return;
+  map.fitBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng])), { padding: [30, 30] });
+}
+
+document.getElementById('labelMode').onchange = () => drawStops();
+
+document.getElementById('btnLocate').onclick = () => {
+  if (myLatLng) {
+    map.setView([myLatLng.lat, myLatLng.lng], 17);
+    if (currentPosMarker) currentPosMarker.openPopup();
+  } else toast('GPS indisponível. Toque em "Verificar GPS".');
+};
+
+document.getElementById('btnClear').onclick = async () => {
+  if (!confirm('Limpar tudo?')) return;
+  await dbClear(STORE_STOPS);
+  await dbClear(STORE);
+  stopsCache = [];
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  renderList();
+  toast('Dados limpos');
+};
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+/* ===================== INIT ===================== */
+(async () => {
+  await openDB();
+  watchGPS();
+  await drawStops();
+})();
+</script>
+</body>
+</html>
